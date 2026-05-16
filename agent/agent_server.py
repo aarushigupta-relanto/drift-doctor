@@ -27,7 +27,7 @@ class DriftReport(BaseModel):
     drift_detected: bool
     drift_share: float
     severity: str
-    details: Dict[str, ColumnDrift]
+    details: Dict[str, dict]
     report_html: str | None = None
 
 

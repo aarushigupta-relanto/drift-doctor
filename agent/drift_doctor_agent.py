@@ -20,64 +20,93 @@ class DriftDoctorAgent:
             model=self.model_name,
             temperature=0.2
         )
-
+        self.last_report = None
+        self.last_diagnosis = None
+        self.last_retrain = None
         with open("prompts/system_prompt.txt", "r", encoding="utf-8") as f:
             self.system_prompt = f.read()
 
     def _summarize_drift_report(self, drift_report: dict) -> str:
-        """
-        Convert raw drift JSON into cleaner context for the LLM.
-        """
-
         details = drift_report.get("details", {})
+        confidence = details.get("confidence", {})
+        intents = details.get("intent_distribution", {})
 
-        drifted_features = []
-        stable_features = []
+        severity = drift_report.get("severity")
+        drift_share = drift_report.get("drift_share")
+        psi_score = drift_report.get("psi_score")
 
-        for feature, metrics in details.items():
-            if metrics.get("drifted"):
-                drifted_features.append(
-                    f"- {feature}: DRIFTED "
-                    f"(p_value={metrics.get('p_value')}, "
-                    f"ks_stat={metrics.get('ks_stat')})"
-                )
-            else:
-                stable_features.append(
-                    f"- {feature}: stable "
-                    f"(p_value={metrics.get('p_value')})"
-                )
-        possible_causes = []
+        shifted_intents = intents.get("top_shifted_intents", [])
 
-        if "confidence" in details:
-            possible_causes.append(
-                "- Confidence degradation suggests unseen or poorly represented queries."
+        mean_ref_conf = confidence.get("mean_ref_confidence")
+        mean_cur_conf = confidence.get("mean_cur_confidence")
+
+        unknown_ref = intents.get("unknown_pct_reference", 0)
+        unknown_cur = intents.get("unknown_pct_current", 0)
+
+        confidence_drop = None
+
+        if mean_ref_conf and mean_cur_conf:
+            confidence_drop = round(mean_ref_conf - mean_cur_conf, 2)
+
+        behavioral_analysis = []
+
+        if confidence_drop and confidence_drop > 0.3:
+            behavioral_analysis.append(
+                "Model confidence has dropped significantly, suggesting the model is encountering unfamiliar or poorly represented queries."
             )
 
-        if "intent_distribution" in details:
-            possible_causes.append(
-                "- Intent distribution shift suggests changing user behavior or emerging trends."
+            behavioral_analysis.append(
+                "This may indicate vocabulary drift, unseen semantic patterns, or insufficient training coverage for current production traffic."
             )
 
-        if "response_time_ms" in details:
-            possible_causes.append(
-                "- Increased response latency may indicate inference or infrastructure bottlenecks."
+        if unknown_cur > unknown_ref:
+            behavioral_analysis.append(
+                "The percentage of unknown intents has increased, indicating emerging user behaviors or unseen query patterns."
             )
+
+            behavioral_analysis.append(
+                "Production traffic may now contain intents that were absent or underrepresented during training."
+            )
+
+        if shifted_intents:
+            behavioral_analysis.append(
+                f"Major behavioral shifts detected in intents: {', '.join(shifted_intents)}."
+            )
+
+            behavioral_analysis.append(
+                "User interaction patterns appear to be evolving away from the historical baseline distribution."
+            )
+
+        if psi_score and psi_score > 0.4:
+            behavioral_analysis.append(
+                "PSI score indicates substantial distribution instability between reference and production traffic."
+            )
+
+            behavioral_analysis.append(
+                "Feature distributions have shifted enough to potentially reduce model reliability in production."
+            )
+
+        
         summary = f"""
-        DRIFT REPORT SUMMARY
+    AI DRIFT ANALYSIS
 
-        Drift Detected: {drift_report.get('drift_detected')}
-        Severity: {drift_report.get('severity')}
-        Drift Share: {drift_report.get('drift_share')}
+    Severity: {severity}
+    Drift Share: {drift_share}
+    PSI Score: {psi_score}
 
-        DRIFTED FEATURES:
-        {chr(10).join(drifted_features) if drifted_features else 'None'}
+    CONFIDENCE ANALYSIS
+    - Reference Confidence: {mean_ref_conf}
+    - Current Confidence: {mean_cur_conf}
+    - Confidence Drop: {confidence_drop}
 
-        STABLE FEATURES:
-        {chr(10).join(stable_features) if stable_features else 'None'}
+    INTENT ANALYSIS
+    - Top Shifted Intents: {shifted_intents}
+    - Unknown Intent % (Reference): {unknown_ref}
+    - Unknown Intent % (Current): {unknown_cur}
 
-        POSSIBLE INTERPRETATIONS:
-        {chr(10).join(possible_causes) if possible_causes else 'No strong indicators detected.'}
-        """
+    BEHAVIORAL INTERPRETATION
+    {chr(10).join([f"- {x}" for x in behavioral_analysis])}
+    """
 
         return summary.strip()
 
@@ -86,6 +115,8 @@ class DriftDoctorAgent:
         Generate root-cause analysis for detected drift.
         """
 
+        self.last_report = drift_report
+        self.last_diagnosis = None
         summarized_report = self._summarize_drift_report(drift_report)
 
         prompt = ChatPromptTemplate.from_messages([
@@ -145,8 +176,16 @@ Provide a diagnosis.
         """
 
         context = context or {}
+        latest_context = {
+            "last_report": self.last_report,
+            "last_diagnosis": self.last_diagnosis,
+            "last_retrain": self.last_retrain
+        }
 
-        formatted_context = json.dumps(context, indent=2)
+        formatted_context = json.dumps(
+            context if context else latest_context,
+            indent=2
+        )
 
         prompt = f"""
     You are the AI Drift Doctor conversational assistant.
@@ -160,6 +199,9 @@ Provide a diagnosis.
 
     Current system state:
     {formatted_context}
+
+    LATEST SYSTEM STATE:
+    {json.dumps(latest_context, indent=2)}
 
     User question:
     {user_message}
@@ -182,12 +224,30 @@ Provide a diagnosis.
         Decide whether retraining is required and recommend a strategy.
         """
 
+        self.last_report = drift_report
+
         diagnosis = self.explain_drift(drift_report)
 
         drift_share = drift_report.get("drift_share", 0)
         severity = drift_report.get("severity", "LOW")
+        psi_score = drift_report.get("psi_score", 0)
 
-        retrain_recommended = drift_share > 0.3
+        details = drift_report.get("details", {})
+        confidence = details.get("confidence", {})
+
+        mean_ref_conf = confidence.get("mean_ref_confidence", 0)
+        mean_cur_conf = confidence.get("mean_cur_confidence", 0)
+
+        confidence_drop = round(
+            mean_ref_conf - mean_cur_conf,
+            2
+        )
+
+        retrain_recommended = (
+            drift_share > 0.3
+            or psi_score > 0.4
+            or confidence_drop > 0.4
+        )
 
         if severity == "HIGH":
             strategy = "full"
@@ -201,21 +261,38 @@ Provide a diagnosis.
                 "Large portion of monitored features have drifted."
             )
 
-        details = drift_report.get("details", {})
-
-        if "confidence" in details and details["confidence"].get("drifted"):
+        if psi_score > 0.4:
             retrain_reason.append(
-                "Model confidence degradation detected."
+                "PSI score indicates major production distribution instability."
             )
 
-        if "intent_distribution" in details and details["intent_distribution"].get("drifted"):
+        if confidence_drop > 0.4:
             retrain_reason.append(
-                "User intent distribution has shifted significantly."
+                "Model confidence has degraded substantially compared to the reference baseline."
             )
 
-        return {
+        if confidence.get("drifted"):
+            retrain_reason.append(
+                "Confidence distribution drift detected through KS statistical testing."
+            )
+
+        intent_data = details.get("intent_distribution", {})
+        shifted_intents = intent_data.get("top_shifted_intents", [])
+
+        if shifted_intents:
+            retrain_reason.append(
+                f"Behavioral shifts detected in intents: {', '.join(shifted_intents)}."
+            )
+
+        result = {
             **diagnosis,
             "retrain_recommended": retrain_recommended,
             "retrain_strategy": strategy,
-            "retrain_reason": retrain_reason
+            "retrain_reason": retrain_reason,
+            "confidence_drop": confidence_drop,
+            "psi_score": psi_score
         }
+
+        self.last_retrain = result
+
+        return result
