@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+drift_doctor.db
+.env
