@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -121,3 +122,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+=======
+__pycache__/
+*.pyc
+drift_doctor.db
+.env
+>>>>>>> 4fb89b37ac24ba27a8772bf1def34263396ca8d8
