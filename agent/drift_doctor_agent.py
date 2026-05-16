@@ -219,21 +219,60 @@ Provide a diagnosis.
 
         return response.content
 
-    def suggest_retrain(self, drift_report: dict) -> dict:
-        """
-        Decide whether retraining is required and recommend a strategy.
-        """
+    def _get_retraining_strategy(
+        self,
+        drift_types: list[str]
+    ) -> dict:
+            strategy_map = {
+                "confidence_drift": {
+                    "strategy": "full_retraining",
+                    "reason": "Model confidence has degraded significantly."
+                },
 
-        self.last_report = drift_report
+                "distribution_drift": {
+                    "strategy": "distribution_rebalancing",
+                    "reason": "Production feature distributions have shifted substantially."
+                },
 
-        diagnosis = self.explain_drift(drift_report)
+                "intent_drift": {
+                    "strategy": "intent_expansion_training",
+                    "reason": "New or evolving user intents detected in production traffic."
+                },
 
-        drift_share = drift_report.get("drift_share", 0)
-        severity = drift_report.get("severity", "LOW")
-        psi_score = drift_report.get("psi_score", 0)
+                "behavioral_drift": {
+                    "strategy": "recent_conversation_finetuning",
+                    "reason": "User interaction behavior has changed significantly."
+                },
+
+                "possible_retrieval_or_knowledge_issue": {
+                    "strategy": "knowledge_base_refresh",
+                    "reason": "Issue may originate from stale retrieval or knowledge systems rather than statistical drift."
+                }
+            }
+
+            recommendations = []
+
+            for drift_type in drift_types:
+                if drift_type in strategy_map:
+                    recommendations.append({
+                        "drift_type": drift_type,
+                        **strategy_map[drift_type]
+                    })
+
+            return {
+                "recommended_strategies": recommendations
+            }
+    
+    def _detect_drift_types(self, drift_report: dict) -> list[str]:
+
+        drift_types = []
 
         details = drift_report.get("details", {})
+
         confidence = details.get("confidence", {})
+        intents = details.get("intent_distribution", {})
+
+        psi_score = drift_report.get("psi_score", 0)
 
         mean_ref_conf = confidence.get("mean_ref_confidence", 0)
         mean_cur_conf = confidence.get("mean_cur_confidence", 0)
@@ -243,46 +282,93 @@ Provide a diagnosis.
             2
         )
 
-        retrain_recommended = (
-            drift_share > 0.3
-            or psi_score > 0.4
-            or confidence_drop > 0.4
+        unknown_ref = intents.get("unknown_pct_reference", 0)
+        unknown_cur = intents.get("unknown_pct_current", 0)
+
+        shifted_intents = intents.get(
+            "top_shifted_intents",
+            []
         )
 
-        if severity == "HIGH":
-            strategy = "full"
-        else:
-            strategy = "incremental"
+        # Confidence Drift
+        if confidence_drop > 0.3:
+            drift_types.append("confidence_drift")
+
+        # Distribution Drift
+        if psi_score > 0.4:
+            drift_types.append("distribution_drift")
+
+        # Intent Drift
+        if unknown_cur > unknown_ref:
+            drift_types.append("intent_drift")
+
+        # Behavioral Drift
+        if shifted_intents:
+            drift_types.append("behavioral_drift")
+
+        # Retrieval / KG Suspicion
+        if (
+            confidence_drop < 0.1
+            and psi_score < 0.2
+            and drift_report.get("severity") == "LOW"
+        ):
+            drift_types.append("possible_retrieval_or_knowledge_issue")
+
+        return drift_types
+    
+    
+    def suggest_retrain(self, drift_report: dict) -> dict:
+        """
+        Decide whether retraining is required and recommend a strategy.
+        """
+        self.last_report = drift_report
+
+        diagnosis = self.explain_drift(drift_report)
+        drift_types = self._detect_drift_types(drift_report)
+        strategy_recommendations = self._get_retraining_strategy(drift_types)
+
+        drift_share = drift_report.get("drift_share", 0)
+        severity = drift_report.get("severity", "LOW")
+        psi_score = drift_report.get("psi_score", 0)
+
+        details = drift_report.get("details", {})
+        confidence = details.get("confidence", {})
+        mean_ref_conf = confidence.get("mean_ref_confidence", 0)
+        mean_cur_conf = confidence.get("mean_cur_confidence", 0)
+        confidence_drop = round(mean_ref_conf - mean_cur_conf, 2)
+
+        retrain_recommended = (
+            drift_share > 0.3 or psi_score > 0.4 or confidence_drop > 0.4
+        )
+
+        strategy = "full" if severity == "HIGH" else "incremental"
 
         retrain_reason = []
 
-        if drift_share > 0.5:
-            retrain_reason.append(
-                "Large portion of monitored features have drifted."
-            )
+        # Add strategy-based reasons first (avoids duplicating detection logic)
+        for rec in strategy_recommendations.get("recommended_strategies", []):
+            reason = rec.get("reason")
+            if reason and reason not in retrain_reason:
+                retrain_reason.append(reason)
 
-        if psi_score > 0.4:
-            retrain_reason.append(
-                "PSI score indicates major production distribution instability."
-            )
+        # Add other concrete signals
+        if drift_share > 0.5 and "Large portion of monitored features have drifted." not in retrain_reason:
+            retrain_reason.append("Large portion of monitored features have drifted.")
 
-        if confidence_drop > 0.4:
-            retrain_reason.append(
-                "Model confidence has degraded substantially compared to the reference baseline."
-            )
+        if psi_score > 0.4 and "PSI score indicates major production distribution instability." not in retrain_reason:
+            retrain_reason.append("PSI score indicates major production distribution instability.")
 
-        if confidence.get("drifted"):
-            retrain_reason.append(
-                "Confidence distribution drift detected through KS statistical testing."
-            )
+        if confidence_drop > 0.4 and "Model confidence has degraded substantially compared to the reference baseline." not in retrain_reason:
+            retrain_reason.append("Model confidence has degraded substantially compared to the reference baseline.")
 
-        intent_data = details.get("intent_distribution", {})
-        shifted_intents = intent_data.get("top_shifted_intents", [])
+        if confidence.get("drifted") and "Confidence distribution drift detected through KS statistical testing." not in retrain_reason:
+            retrain_reason.append("Confidence distribution drift detected through KS statistical testing.")
 
+        shifted_intents = details.get("intent_distribution", {}).get("top_shifted_intents", [])
         if shifted_intents:
-            retrain_reason.append(
-                f"Behavioral shifts detected in intents: {', '.join(shifted_intents)}."
-            )
+            intent_reason = f"Behavioral shifts detected in intents: {', '.join(shifted_intents)}."
+            if intent_reason not in retrain_reason:
+                retrain_reason.append(intent_reason)
 
         result = {
             **diagnosis,
@@ -290,9 +376,13 @@ Provide a diagnosis.
             "retrain_strategy": strategy,
             "retrain_reason": retrain_reason,
             "confidence_drop": confidence_drop,
-            "psi_score": psi_score
+            "psi_score": psi_score,
+            "drift_types": drift_types,
+            "drift_share": drift_share,
+            "strategy_recommendations": strategy_recommendations,
         }
 
         self.last_retrain = result
-
         return result
+    
+    
