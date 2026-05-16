@@ -55,7 +55,7 @@ class DriftDetector:
         psi = np.sum((actual_percents - expected_percents) * np.log((actual_percents + 1e-6) / (expected_percents + 1e-6)))
         return float(np.clip(psi, -10, 10))
 
-    def detect(self, current_df: pd.DataFrame) -> Dict[str, Any]:
+    def detect(self, current_df: pd.DataFrame, generate_html: bool = False) -> Dict[str, Any]:
         try:
             print("[DriftDetector] Running drift detection...")
             timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -74,10 +74,12 @@ class DriftDetector:
             dataset_drift = evidently_dict["metrics"][0]["result"]
             drift_share = dataset_drift.get("drift_share", 0.0)
             
-            reports_dir = os.path.join(os.path.dirname(__file__), "reports")
-            os.makedirs(reports_dir, exist_ok=True)
-            report_path = os.path.join(reports_dir, f"drift_report_{timestamp.replace(':', '-')}.html")
-            report.save_html(report_path)
+            report_path = ""
+            if generate_html:
+                reports_dir = os.path.join(os.path.dirname(__file__), "reports")
+                os.makedirs(reports_dir, exist_ok=True)
+                report_path = os.path.join(reports_dir, f"drift_report_{timestamp.replace(':', '-')}.html")
+                report.save_html(report_path)
             
             # Feature extraction for current data
             cur_features = extract_features(current_df, vectorizer=self.tfidf, is_training=False)
@@ -142,7 +144,7 @@ class DriftDetector:
                         "unknown_pct_current": round(float(unknown_pct_cur), 2)
                     }
                 },
-                "report_html": os.path.relpath(report_path, start=os.path.dirname(os.path.dirname(__file__))).replace("\\", "/"),
+                "report_html": os.path.relpath(report_path, start=os.path.dirname(os.path.dirname(__file__))).replace("\\", "/") if generate_html else None,
                 "timestamp": timestamp
             }
             return result
@@ -151,7 +153,7 @@ class DriftDetector:
             print(f"[DriftDetector] Error: {e}")
             return {"drift_detected": False, "error": str(e)}
 
-def run_drift_check(current_df: pd.DataFrame) -> Dict[str, Any]:
+def run_drift_check(current_df: pd.DataFrame, generate_html: bool = False) -> Dict[str, Any]:
     base_dir = os.path.dirname(__file__)
     data_path = os.path.join(os.path.dirname(base_dir), "final_dataset.csv")
     model_path = os.path.join(base_dir, "models", "reference_model.pkl")
@@ -162,7 +164,7 @@ def run_drift_check(current_df: pd.DataFrame) -> Dict[str, Any]:
         model_path=model_path,
         tfidf_path=tfidf_path
     )
-    return detector.detect(current_df)
+    return detector.detect(current_df, generate_html=generate_html)
 
 if __name__ == "__main__":
     # Test script execution
@@ -171,9 +173,26 @@ if __name__ == "__main__":
         df = pd.read_csv(dataset_path)
         cur_df = df[df["drift_tag"] == "clean_web"].head(100) # Simulating production data
         if not cur_df.empty:
-            result = run_drift_check(cur_df)
-            import json
-            print(f"[DriftDetector] Result:\n{json.dumps(result, indent=2)}")
+            result = run_drift_check(cur_df, generate_html=False)
+            
+            print("\n" + "="*60)
+            print("   AI DRIFT DOCTOR - TERMINAL REPORT   ")
+            print("="*60)
+            print(f"Status:      {'[!] DRIFT DETECTED' if result['drift_detected'] else '[OK] NO DRIFT'}")
+            print(f"Severity:    {result['severity']}")
+            print(f"Drift Share: {result['drift_share'] * 100}%")
+            print(f"PSI Score:   {result['psi_score']}")
+            print("-" * 60)
+            print("   MODEL CONFIDENCE METRICS:")
+            conf = result['details']['confidence']
+            print(f"  Reference Mean Confidence: {conf['mean_ref_confidence']}")
+            print(f"  Current Mean Confidence:   {conf['mean_cur_confidence']}")
+            print(f"  KS Test p-value:           {conf['p_value']} ({'Drifted' if conf['drifted'] else 'Stable'})")
+            print("-" * 60)
+            print("   TOP SHIFTED INTENTS:")
+            for intent in result['details']['intent_distribution']['top_shifted_intents']:
+                print(f"  - {intent}")
+            print("="*60 + "\n")
         else:
             print("[DriftDetector] No 'clean_web' data found for testing.")
     except Exception as e:
