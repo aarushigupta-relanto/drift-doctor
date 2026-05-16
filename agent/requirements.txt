@@ -1,3 +1,7 @@
-# Agent dependencies
-openai
+fastapi
+uvicorn
 langchain
+langchain-groq
+langchain-core
+pydantic
+python-dotenv
