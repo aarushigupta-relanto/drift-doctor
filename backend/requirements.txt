@@ -1,0 +1,6 @@
+# Backend dependencies
+fastapi
+uvicorn
+celery
+sqlalchemy
+psycopg2-binary

@@ -1,0 +1,4 @@
+# ML module dependencies
+scikit-learn
+pandas
+numpy

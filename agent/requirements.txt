@@ -1,0 +1,3 @@
+# Agent dependencies
+openai
+langchain
