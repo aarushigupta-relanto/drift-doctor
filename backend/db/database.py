@@ -69,6 +69,22 @@ async def get_retrain_task(task_id) -> Optional[Dict[str, Any]]:
             r.pop("result_json", None)
             return r
 
+async def get_retrain_history(limit: int = 20) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT task_id, status, strategy, requested_by, created_at, result_json "
+            "FROM retrain_tasks ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = []
+            for row in await cursor.fetchall():
+                r = dict(row)
+                r["result"] = json.loads(r["result_json"]) if r.get("result_json") else None
+                r.pop("result_json", None)
+                rows.append(r)
+            return rows
+
 async def save_chat_log(log: dict):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT INTO chat_logs (timestamp, user_message, intent, response_time_ms, confidence, session_id) VALUES (?,?,?,?,?,?)",

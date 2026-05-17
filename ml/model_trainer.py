@@ -7,7 +7,10 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-from typing import Dict, Union, Tuple, Any
+from typing import Dict, Union, Tuple, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ml.run_config import MLRunConfig
 
 def extract_features(df: pd.DataFrame, vectorizer: TfidfVectorizer = None, is_training: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, TfidfVectorizer]]:
     """
@@ -37,29 +40,74 @@ def extract_features(df: pd.DataFrame, vectorizer: TfidfVectorizer = None, is_tr
         features = np.column_stack([query_len, word_count, avg_word_len, has_question, has_greeting, tfidf_features])
         return features
 
-def train_reference_model(data_path: str) -> Dict[str, Any]:
+def train_reference_model(
+    data_path: str | None = None,
+    *,
+    config: Any = None,
+    include_production_bridge: bool | None = None,
+    production_bridge_cap: int = 250,
+) -> Dict[str, Any]:
     """
     Trains the intent classifier on the reference data and saves artifacts.
+
+    Legacy datasets may enable a production bridge + harmonization when configured.
     """
-    print(f"[Trainer] Loading dataset from {data_path}")
+    from ml.run_config import MLRunConfig
+
+    cfg = config if isinstance(config, MLRunConfig) else MLRunConfig.from_payload(
+        {"dataset_path": data_path} if data_path else (config or {})
+    )
+    path = cfg.dataset_path
+    use_bridge = (
+        include_production_bridge
+        if include_production_bridge is not None
+        else cfg.legacy_harmonize
+    )
+
+    print(f"[Trainer] Loading dataset from {path}")
     try:
-        df = pd.read_csv(data_path)
+        df = pd.read_csv(path)
     except FileNotFoundError:
-        print(f"[Trainer] Error: File {data_path} not found.")
-        return {"error": f"File {data_path} not found."}
+        print(f"[Trainer] Error: File {path} not found.")
+        return {"error": f"File {path} not found."}
 
-    # Filter clean rows and drop NaNs in necessary columns
-    df_clean = df[df["drift_tag"] == "clean"].dropna(subset=["user_query", "intent"])
-    
+    df_clean = df[df["drift_tag"] == cfg.historical_tag].dropna(
+        subset=["user_query", "intent"]
+    )
+
     if df_clean.empty:
-        raise ValueError("[Trainer] No 'clean' data found to train the reference model.")
+        raise ValueError(
+            f"[Trainer] No '{cfg.historical_tag}' rows found to train the reference model."
+        )
 
-    print(f"[Trainer] Extracting features for {len(df_clean)} rows.")
-    X, vectorizer = extract_features(df_clean, is_training=True)
+    df_train = df_clean
+    bridge_n = 0
+    if use_bridge:
+        from ml.intent_harmonizer import harmonize_production_frame
+
+        prod_raw = df[df["drift_tag"] == cfg.production_tag].dropna(
+            subset=["user_query", "intent"]
+        )
+        if not prod_raw.empty:
+            prod = (
+                harmonize_production_frame(df_clean, prod_raw)
+                if cfg.legacy_harmonize
+                else prod_raw
+            )
+            bridge_n = min(production_bridge_cap, len(prod))
+            prod_sample = prod.sample(n=bridge_n, random_state=42)
+            df_train = pd.concat([df_clean, prod_sample], ignore_index=True)
+            print(
+                f"[Trainer] Added {bridge_n} production bridge rows "
+                f"({len(df_clean)} historical + {bridge_n} production)."
+            )
+
+    print(f"[Trainer] Extracting features for {len(df_train)} rows.")
+    X, vectorizer = extract_features(df_train, is_training=True)
     
     print("[Trainer] Encoding intent labels.")
     le = LabelEncoder()
-    y = le.fit_transform(df_clean["intent"])
+    y = le.fit_transform(df_train["intent"])
     
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -74,12 +122,12 @@ def train_reference_model(data_path: str) -> Dict[str, Any]:
     print(f"[Trainer] Test Accuracy: {accuracy:.4f}")
     
     # Save models
-    models_dir = os.path.join(os.path.dirname(__file__), "models")
+    models_dir = cfg.models_dir
     os.makedirs(models_dir, exist_ok=True)
-    
-    model_path = os.path.join(models_dir, "reference_model.pkl")
+
+    model_path = cfg.reference_model_path
     encoder_path = os.path.join(models_dir, "label_encoder.pkl")
-    tfidf_path = os.path.join(models_dir, "tfidf_vectorizer.pkl")
+    tfidf_path = cfg.reference_vectorizer_path
     
     # Save RF + Encoder in reference_model.pkl as specified
     saved_obj = {
@@ -103,12 +151,17 @@ def train_reference_model(data_path: str) -> Dict[str, Any]:
     
     return {
         "accuracy": float(accuracy),
-        "model_path": "ml/models/reference_model.pkl",
-        "n_train": len(X_train)
+        "model_path": model_path,
+        "vectorizer_path": tfidf_path,
+        "dataset_path": path,
+        "n_train": len(X_train),
+        "n_clean": len(df_clean),
+        "n_production_bridge": bridge_n,
+        "run_config": cfg.to_dict(),
     }
 
 if __name__ == "__main__":
-    # Test script execution
-    dataset_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "final_dataset.csv")
-    result = train_reference_model(dataset_path)
+    from ml.run_config import MLRunConfig
+
+    result = train_reference_model(config=MLRunConfig.default())
     print(f"[Trainer] Final Result: {result}")

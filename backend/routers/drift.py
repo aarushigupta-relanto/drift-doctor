@@ -1,5 +1,5 @@
 import logging, uuid, asyncio, sys, os
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from backend.db.database import save_drift_event, get_drift_history, get_latest_drift
 from backend.ws.manager import manager
@@ -10,6 +10,14 @@ router = APIRouter(prefix="/api/drift", tags=["drift"])
 
 @router.post("/report")
 async def receive_drift_report(report: dict):
+    system_type = report.get("system_type") or report.get("monitoring_profile")
+    if system_type not in ("chatbot", "predictive_model"):
+        raise HTTPException(
+            status_code=400,
+            detail="system_type is required on the report: 'chatbot' or 'predictive_model'",
+        )
+    report.setdefault("system_type", system_type)
+
     diagnosis_dict = await call_agent_explain(report)
     event_id = await save_drift_event(
         severity=report.get("severity", "LOW"),

@@ -147,18 +147,11 @@ class DriftDetector:
             print(f"[DriftDetector] Error: {e}")
             return {"drift_detected": False, "error": str(e)}
 
-def run_drift_check(current_df: pd.DataFrame) -> Dict[str, Any]:
-    base_dir = os.path.dirname(__file__)
-    data_path = os.path.join(os.path.dirname(base_dir), "final_dataset.csv")
-    model_path = os.path.join(base_dir, "models", "reference_model.pkl")
-    tfidf_path = os.path.join(base_dir, "models", "tfidf_vectorizer.pkl")
-    
-    detector = DriftDetector(
-        reference_path=data_path,
-        model_path=model_path,
-        tfidf_path=tfidf_path
-    )
-    return detector.detect(current_df)
+def run_drift_check(current_df: pd.DataFrame, system_type: str | None = None) -> Dict[str, Any]:
+    """Run predictive ML monitoring (delegates to dual monitoring pipeline)."""
+    from ml.monitoring_pipeline import run_monitoring
+
+    return run_monitoring(current_df, system_type=system_type or "predictive_model")
 
 if __name__ == "__main__":
     # Test script execution

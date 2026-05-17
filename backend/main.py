@@ -6,7 +6,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from backend.db.database import init_db
 from backend.ws.manager import manager
-from backend.routers import drift_router, chat_router, retrain_router, ingest_router, health_router
+from backend.routers import (
+    drift_router,
+    chat_router,
+    retrain_router,
+    ingest_router,
+    health_router,
+    monitor_router,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -25,6 +32,7 @@ app.include_router(chat_router)
 app.include_router(retrain_router)
 app.include_router(ingest_router)
 app.include_router(health_router)
+app.include_router(monitor_router)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
