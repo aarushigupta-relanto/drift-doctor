@@ -56,6 +56,29 @@ def _retraining_necessity(drift_types: list[str], report: dict) -> str:
     return "not_required"
 
 
+def _production_risk_label(drift_types: list[str], report: dict) -> str:
+    severity = report.get("severity", "LOW")
+    if severity == "HIGH" or "confidence_drift" in drift_types:
+        return "HIGH — model reliability in production is compromised"
+    if "distribution_drift" in drift_types or "psi_instability" in drift_types:
+        return "MODERATE — production distribution mismatch detected"
+    if drift_types:
+        return "ELEVATED — monitor closely and plan remediation"
+    return "LOW — within acceptable monitoring thresholds"
+
+
+def _recommended_strategy(drift_types: list[str], report: dict) -> str:
+    if "confidence_drift" in drift_types:
+        return "full_retraining"
+    if "distribution_drift" in drift_types or "feature_instability" in drift_types:
+        return "distribution_rebalancing"
+    if "intent_drift" in drift_types:
+        return "intent_expansion_training"
+    if drift_types:
+        return "incremental_retraining"
+    return "monitor_only"
+
+
 class PredictiveMonitor:
     def __init__(
         self,
@@ -103,7 +126,13 @@ class PredictiveMonitor:
                 "model_uncertainty_elevated": "confidence_drift" in drift_types,
                 "production_distribution_mismatch": "distribution_drift" in drift_types,
                 "retraining_necessity": _retraining_necessity(drift_types, raw),
+                "operational_severity": raw.get("severity", "LOW"),
+                "production_risk": _production_risk_label(drift_types, raw),
+                "recommended_strategy": _recommended_strategy(drift_types, raw),
             },
+            "production_risk": _production_risk_label(drift_types, raw),
+            "retraining_necessity": _retraining_necessity(drift_types, raw),
+            "retrain_strategy": _recommended_strategy(drift_types, raw),
         }
 
 

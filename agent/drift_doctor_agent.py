@@ -292,17 +292,21 @@ Provide a diagnosis.
             "last_retrain": self.last_retrain,
             "last_system_type": self.last_system_type,
         }
+        merged = {**latest_context, **context}
 
-        formatted_context = json.dumps(
-            context if context else latest_context,
-            indent=2,
+        system_type = (
+            (merged.get("report") or {}).get("system_type")
+            or merged.get("system_type")
+            or self.last_system_type
+            or "predictive_model"
         )
-
         system_role = (
             "chatbot/RAG assistant"
-            if self.last_system_type == "chatbot"
+            if system_type == "chatbot"
             else "predictive ML model"
         )
+
+        formatted_context = json.dumps(merged, indent=2, default=str)
 
         prompt = f"""
 You are the AI Drift Doctor — an AI reliability engineer and MLOps copilot.
@@ -319,11 +323,10 @@ User question:
 {user_message}
 
 Rules:
-- Be concise and operational (under 6 sentences).
-- Use the provided system context and system_type when present.
-- For chatbot systems, distinguish retrieval/KB issues from statistical model drift.
-- For predictive models, focus on PSI, distribution shift, and retraining necessity.
-- Avoid generic AI explanations.
+- Answer the user's question directly.
+- Use the monitoring context above; focus on what they asked (intents, failure, behavior, retrain, KB, risk, etc.).
+- Do not repeat the same generic summary if their question is specific.
+- Be concise.
 """
 
         response = self.llm.invoke(prompt)

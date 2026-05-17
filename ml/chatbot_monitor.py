@@ -70,6 +70,67 @@ def _avg_query_length(records: list[dict]) -> float:
     return float(np.mean([len(r.get("user_query", "").split()) for r in records]))
 
 
+def _infer_intent(query: str) -> str:
+    q = query.lower()
+    if GREETING_PATTERN.search(query):
+        return "greeting"
+    if "refund" in q:
+        return "refund"
+    if any(x in q for x in ("api", "webhook", "authenticate", "endpoint")):
+        return "api_docs"
+    if any(x in q for x in ("price", "pricing", "plan", "tier", "cost")):
+        return "pricing"
+    if "order" in q or "track" in q or "ship" in q:
+        return "order_tracking"
+    if any(x in q for x in ("joke", "lol", "haha")):
+        return "chitchat"
+    if FAQ_PATTERN.search(query):
+        return "faq"
+    return "general"
+
+
+def _intent_distribution(records: list[dict]) -> dict[str, float]:
+    if not records:
+        return {}
+    counts = Counter(_infer_intent(r.get("user_query", "")) for r in records)
+    total = len(records)
+    return {intent: count / total for intent, count in counts.items()}
+
+
+def _intent_shift_analysis(
+    reference: list[dict],
+    current: list[dict],
+) -> dict[str, Any]:
+    ref_dist = _intent_distribution(reference)
+    cur_dist = _intent_distribution(current)
+    all_intents = set(ref_dist) | set(cur_dist)
+
+    shifts: list[dict[str, Any]] = []
+    for intent in all_intents:
+        ref_pct = ref_dist.get(intent, 0.0)
+        cur_pct = cur_dist.get(intent, 0.0)
+        shifts.append(
+            {
+                "intent": intent,
+                "reference_pct": round(ref_pct, 3),
+                "current_pct": round(cur_pct, 3),
+                "delta_pct": round(cur_pct - ref_pct, 3),
+            }
+        )
+    shifts.sort(key=lambda row: abs(row["delta_pct"]), reverse=True)
+    top_shifted = [row["intent"] for row in shifts[:4] if abs(row["delta_pct"]) >= 0.08]
+
+    def _unknown_share(dist: dict[str, float]) -> float:
+        return dist.get("general", 0.0) + dist.get("chitchat", 0.0)
+
+    return {
+        "top_shifted_intents": top_shifted or [row["intent"] for row in shifts[:2]],
+        "intent_shifts": shifts,
+        "unknown_pct_reference": round(_unknown_share(ref_dist), 2),
+        "unknown_pct_current": round(_unknown_share(cur_dist), 2),
+    }
+
+
 def _vocabulary_drift_score(ref: list[dict], cur: list[dict]) -> float:
     ref_vocab: set[str] = set()
     cur_vocab: set[str] = set()
@@ -217,6 +278,43 @@ def _severity(drift_types: list[str], metrics: dict[str, Any]) -> str:
     return "LOW"
 
 
+def _production_risk_label(drift_types: list[str], severity: str, knowledge: dict[str, Any]) -> str:
+    kb_stale = knowledge.get("possible_knowledge_staleness") or "possible_knowledge_staleness" in drift_types
+    if severity == "HIGH" or "confidence_collapse" in drift_types:
+        return "HIGH — retrieval/KB and response quality issues in production"
+    if kb_stale and ("retrieval_degradation" in drift_types or "response_quality_degradation" in drift_types):
+        return "MODERATE — likely KB staleness with retrieval degradation"
+    if drift_types:
+        return "ELEVATED — conversational or behavioral drift detected"
+    return "LOW — within acceptable chatbot monitoring thresholds"
+
+
+def _retraining_necessity(drift_types: list[str], severity: str, knowledge: dict[str, Any]) -> str:
+    kb_stale = knowledge.get("possible_knowledge_staleness")
+    if severity == "HIGH" or "confidence_collapse" in drift_types:
+        return "required"
+    if kb_stale and not any(
+        t in drift_types
+        for t in ("confidence_collapse", "confidence_degradation", "semantic_drift")
+    ):
+        return "not_required"
+    if drift_types:
+        return "recommended"
+    return "not_required"
+
+
+def _recommended_strategy(drift_types: list[str], knowledge: dict[str, Any]) -> str:
+    if knowledge.get("possible_knowledge_staleness") or "possible_knowledge_staleness" in drift_types:
+        return "knowledge_base_refresh"
+    if "retrieval_degradation" in drift_types:
+        return "retrieval_index_rebuild"
+    if "confidence_collapse" in drift_types or "confidence_degradation" in drift_types:
+        return "conversational_finetune"
+    if drift_types:
+        return "prompt_and_retrieval_tuning"
+    return "monitor_only"
+
+
 class ChatbotMonitor:
     """Monitor conversational AI systems using reference vs current dialogue windows."""
 
@@ -249,9 +347,19 @@ class ChatbotMonitor:
             "emerging_conversational_styles": vocabulary_drift_score > 0.35,
         }
 
+        intent_analysis = _intent_shift_analysis(ref, cur)
         drift_types = _detect_drift_types(metrics, conversational_drift, knowledge)
+        if intent_analysis["intent_shifts"] and abs(
+            intent_analysis["intent_shifts"][0]["delta_pct"]
+        ) >= 0.15:
+            if "intent_drift" not in drift_types:
+                drift_types.append("intent_drift")
         severity = _severity(drift_types, metrics)
         drift_detected = bool(drift_types) or knowledge.get("possible_knowledge_staleness")
+        production_risk = _production_risk_label(drift_types, severity, knowledge)
+        retraining_necessity = _retraining_necessity(drift_types, severity, knowledge)
+        retrain_strategy = _recommended_strategy(drift_types, knowledge)
+        kb_refresh = retrain_strategy == "knowledge_base_refresh"
 
         # Backward-compatible fields for agent / backend
         drift_share = max(vocabulary_drift_score, metrics["negative_feedback_rate"])
@@ -281,17 +389,30 @@ class ChatbotMonitor:
                 "confidence_collapse": "confidence_collapse" in drift_types,
             },
             "drift_types": drift_types,
+            "operational_assessment": {
+                "operational_severity": severity,
+                "production_risk": production_risk,
+                "retraining_necessity": retraining_necessity,
+                "recommended_strategy": retrain_strategy,
+                "kb_refresh_recommended": kb_refresh,
+                "retrieval_degradation": "retrieval_degradation" in drift_types,
+                "production_distribution_mismatch": vocabulary_drift_score > 0.35,
+            },
+            "production_risk": production_risk,
+            "retraining_necessity": retraining_necessity,
+            "retrain_strategy": retrain_strategy,
+            "remediation": {
+                "primary_action": retrain_strategy,
+                "kb_topics": knowledge.get("stale_topics", []),
+                "urgency": severity,
+            },
             "details": {
                 "confidence": {
                     "mean_ref_confidence": metrics["reference_avg_confidence"],
                     "mean_cur_confidence": metrics["avg_confidence"],
                     "drifted": metrics["avg_confidence"] < metrics["reference_avg_confidence"] - 0.1,
                 },
-                "intent_distribution": {
-                    "top_shifted_intents": ["faq", "api_docs"] if "api_docs" in knowledge.get("implicated_topics", []) else ["conversational"],
-                    "unknown_pct_reference": 0.05,
-                    "unknown_pct_current": round(min(0.35, metrics["negative_feedback_rate"] + 0.1), 2),
-                },
+                "intent_distribution": intent_analysis,
             },
             "report_html": None,
         }

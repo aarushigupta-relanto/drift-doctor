@@ -10,10 +10,15 @@ from typing import Any
 
 import pandas as pd
 
-from ml.system_classifier import resolve_system_type, SystemTypeRequiredError
+from ml.system_classifier import (
+    resolve_system_type,
+    SystemTypeRequiredError,
+    classify_monitoring_target,
+)
 from ml.predictive_monitor import run_predictive_monitoring
 from ml.chatbot_monitor import run_chatbot_monitoring
 from ml.simulated_chatbot_data import get_current_conversations
+from ml.production_data import load_production_sample
 
 
 def run_monitoring(
@@ -52,11 +57,13 @@ def run_monitoring(
     resolved_type = classification["system_type"]
 
     if resolved_type == "chatbot":
+        if data is None:
+            data = get_current_conversations()
         report = run_chatbot_monitoring(data, reference_data)
     else:
         if data is None:
-            raise ValueError("Predictive monitoring requires a pandas DataFrame of production rows.")
-        if not isinstance(data, pd.DataFrame):
+            data = load_production_sample()
+        elif not isinstance(data, pd.DataFrame):
             data = pd.DataFrame(data)
         report = run_predictive_monitoring(data)
 

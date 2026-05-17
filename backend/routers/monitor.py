@@ -27,7 +27,13 @@ async def run_monitor(payload: dict):
     from ml.monitoring_pipeline import run_monitoring
     from ml.simulated_chatbot_data import get_current_conversations
 
-    system_type = payload.get("system_type")
+    system_type = payload.get("system_type") or payload.get("monitoring_profile")
+    if system_type not in ("chatbot", "predictive_model"):
+        raise HTTPException(
+            status_code=400,
+            detail="system_type is required: 'chatbot' or 'predictive_model'",
+        )
+
     use_simulated = payload.get("use_simulated_chatbot", False)
     records = payload.get("records")
     reference = payload.get("reference_records")
@@ -37,11 +43,12 @@ async def run_monitor(payload: dict):
     if use_simulated and not records:
         data = get_current_conversations()
 
-    report = run_monitoring(
-        data,
-        system_type=system_type,
-        monitoring_profile=payload.get("monitoring_profile"),
-        reference_data=reference,
+    try:
+        report = run_monitoring(
+            data,
+            system_type=system_type,
+            monitoring_profile=payload.get("monitoring_profile"),
+            reference_data=reference,
             use_simulated_chatbot=use_simulated,
         )
     except ValueError as e:
@@ -50,6 +57,21 @@ async def run_monitor(payload: dict):
     diagnosis = None
     if explain:
         diagnosis = await call_agent_explain(report)
+
+    if not diagnosis:
+        op = report.get("operational_assessment") or {}
+        remediation = report.get("remediation") or {}
+        diagnosis = {
+            "production_risk": report.get("production_risk") or op.get("production_risk"),
+            "retraining_necessity": report.get("retraining_necessity")
+            or op.get("retraining_necessity"),
+            "retrain_strategy": report.get("retrain_strategy")
+            or op.get("recommended_strategy")
+            or remediation.get("primary_action"),
+            "operational_severity": op.get("operational_severity") or report.get("severity"),
+            "drift_types": report.get("drift_types", []),
+            "source": "ml_report_fallback",
+        }
 
     if payload.get("persist", True):
         event_id = await save_drift_event(
