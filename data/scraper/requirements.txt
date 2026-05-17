@@ -1,2 +1,0 @@
-# Data scraper dependencies
-kafka-python
