@@ -22,8 +22,8 @@ export function EmptyState({ systemType }: { systemType: SystemType }) {
       </button>
       {systemType === "predictive_model" && (
         <p className="mt-3 text-xs text-muted">
-          Requires <code className="text-white/80">final_dataset.csv</code> and
-          trained models under <code className="text-white/80">ml/models/</code>.
+          Uses <code className="text-white/80">datasets/drift_doctor_demo.csv</code> and
+          models under <code className="text-white/80">ml/models/</code> (train reference once if missing).
           Chatbot mode works with simulated data out of the box.
         </p>
       )}

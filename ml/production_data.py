@@ -1,4 +1,4 @@
-"""Load production samples from the project dataset for predictive monitoring."""
+"""Load production samples from a configurable dataset."""
 
 from __future__ import annotations
 
@@ -7,34 +7,31 @@ from typing import Optional
 
 import pandas as pd
 
-
-def get_dataset_path() -> str:
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(root, "final_dataset.csv")
+from ml.run_config import MLRunConfig
 
 
 def load_production_sample(
     n: int = 200,
     *,
+    config: MLRunConfig | None = None,
     dataset_path: Optional[str] = None,
-    drift_tag: str = "clean_web",
+    drift_tag: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Load a sample of production rows for drift monitoring.
-
-    Uses rows tagged ``clean_web`` by default (production traffic in this project).
     """
-    path = dataset_path or get_dataset_path()
+    cfg = config or MLRunConfig.default()
+    path = dataset_path or cfg.dataset_path
+    tag = drift_tag or cfg.production_tag
+
     if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Dataset not found at {path}. Place final_dataset.csv in the project root."
-        )
+        raise FileNotFoundError(f"Dataset not found at {path}.")
 
     df = pd.read_csv(path)
-    prod = df[df["drift_tag"] == drift_tag].dropna(subset=["user_query", "intent"])
+    prod = df[df["drift_tag"] == tag].dropna(subset=["user_query", "intent"])
     if prod.empty:
         raise ValueError(
-            f"No rows with drift_tag='{drift_tag}' in {path}. "
+            f"No rows with drift_tag='{tag}' in {path}. "
             "Check the dataset or pass custom records to /api/monitor/run."
         )
 

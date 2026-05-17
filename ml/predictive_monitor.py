@@ -136,5 +136,15 @@ class PredictiveMonitor:
         }
 
 
-def run_predictive_monitoring(current_df: pd.DataFrame) -> dict[str, Any]:
-    return PredictiveMonitor().monitor(current_df)
+def run_predictive_monitoring(
+    current_df: pd.DataFrame,
+    *,
+    reference_path: str | None = None,
+    model_path: str | None = None,
+    tfidf_path: str | None = None,
+) -> dict[str, Any]:
+    return PredictiveMonitor(
+        reference_path=reference_path,
+        model_path=model_path,
+        tfidf_path=tfidf_path,
+    ).monitor(current_df)

@@ -19,6 +19,7 @@ from ml.predictive_monitor import run_predictive_monitoring
 from ml.chatbot_monitor import run_chatbot_monitoring
 from ml.simulated_chatbot_data import get_current_conversations
 from ml.production_data import load_production_sample
+from ml.run_config import MLRunConfig
 
 
 def run_monitoring(
@@ -28,6 +29,7 @@ def run_monitoring(
     monitoring_profile: str | None = None,
     reference_data: Any = None,
     use_simulated_chatbot: bool = False,
+    config: MLRunConfig | None = None,
 ) -> dict[str, Any]:
     """
     Run the appropriate monitoring pipeline.
@@ -46,6 +48,8 @@ def run_monitoring(
     use_simulated_chatbot :
         If True and no data provided, run chatbot monitor on demo traffic.
     """
+    cfg = config or MLRunConfig.default()
+
     if use_simulated_chatbot and data is None:
         data = get_current_conversations()
 
@@ -62,12 +66,17 @@ def run_monitoring(
         report = run_chatbot_monitoring(data, reference_data)
     else:
         if data is None:
-            data = load_production_sample()
+            data = load_production_sample(config=cfg)
         elif not isinstance(data, pd.DataFrame):
             data = pd.DataFrame(data)
-        report = run_predictive_monitoring(data)
+        report = run_predictive_monitoring(
+            data,
+            reference_path=cfg.dataset_path,
+            model_path=cfg.reference_model_path,
+        )
 
     report["classification"] = classification
+    report["run_config"] = cfg.to_dict()
     return report
 
 

@@ -43,6 +43,14 @@ async def run_monitor(payload: dict):
     if use_simulated and not records:
         data = get_current_conversations()
 
+    from ml.run_config import MLRunConfig
+
+    ml_config = (
+        MLRunConfig.default()
+        if system_type == "predictive_model"
+        else None
+    )
+
     try:
         report = run_monitoring(
             data,
@@ -50,6 +58,7 @@ async def run_monitor(payload: dict):
             monitoring_profile=payload.get("monitoring_profile"),
             reference_data=reference,
             use_simulated_chatbot=use_simulated,
+            config=ml_config,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

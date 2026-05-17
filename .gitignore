@@ -125,6 +125,8 @@ __pycache__/
 drift_doctor.db
 .env
 models/
+ml/models/candidate_model_*.pkl
+ml/models/candidate_model_*_metadata.json
 final_dataset.csv
 *.next/
 *.out/
