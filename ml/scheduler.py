@@ -7,7 +7,7 @@ import requests
 import pandas as pd
 from typing import Dict, Any
 
-from ml.drift_detector import run_drift_check
+from ml.monitoring_pipeline import run_monitoring, run_chatbot_check
 
 def run_scheduled_check(data_path: str, interval_seconds: int = 60) -> None:
     print(f"[Scheduler] Starting drift check scheduler. Interval: {interval_seconds}s")
@@ -35,7 +35,7 @@ def run_scheduled_check(data_path: str, interval_seconds: int = 60) -> None:
             sample_size = min(200, len(prod_data))
             sample_df = prod_data.sample(n=sample_size)
             
-            result = run_drift_check(sample_df)
+            result = run_monitoring(sample_df, system_type="predictive_model")
             
             if result.get("drift_detected", False):
                 severity = result.get("severity", "UNKNOWN")
@@ -48,7 +48,7 @@ def run_scheduled_check(data_path: str, interval_seconds: int = 60) -> None:
                 
                 # POST to backend
                 try:
-                    res = requests.post("http://localhost:8000/api/drift", json=result, timeout=5)
+                    res = requests.post("http://localhost:8000/api/drift/report", json=result, timeout=30)
                     if res.status_code == 200:
                         print("[Scheduler] Successfully posted drift report to backend.")
                     else:
@@ -97,7 +97,7 @@ if __name__ == "__main__":
         prod_data = df[df["drift_tag"] == "clean_web"]
         if not prod_data.empty:
             sample_df = prod_data.sample(n=min(200, len(prod_data)))
-            res = run_drift_check(sample_df)
+            res = run_monitoring(sample_df, system_type="predictive_model")
             print(f"[Scheduler] Single check result: Drift Detected = {res.get('drift_detected')}")
             # FIX: Write to log so get_latest_drift_report() can be verified
             reports_dir = os.path.join(base_dir, "reports")

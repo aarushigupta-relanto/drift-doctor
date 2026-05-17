@@ -1,9 +1,9 @@
 import os
 from dotenv import load_dotenv
 
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Dict, List
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from typing import Dict, List, Literal
 
 from drift_doctor_agent import DriftDoctorAgent
 
@@ -29,6 +29,12 @@ class DriftReport(BaseModel):
     severity: str
     details: Dict[str, dict]
     report_html: str | None = None
+    psi_score: float | None = None
+    system_type: Literal["chatbot", "predictive_model"] = Field(
+        ...,
+        description="Required: which monitoring mode produced or applies to this report.",
+    )
+    monitoring_profile: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -65,4 +71,7 @@ def chat(msg: ChatMessage):
 
 @app.post("/suggest-retrain")
 def suggest_retrain(report: DriftReport):
-    return agent.suggest_retrain(report.dict())
+    try:
+        return agent.suggest_retrain(report.dict())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
