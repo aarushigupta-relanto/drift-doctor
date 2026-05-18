@@ -1,42 +1,51 @@
-# Render Blueprint — three Docker Web Services
-# Deploy: Render Dashboard → New → Blueprint → connect this repo
-# Docs: https://render.com/docs/blueprint-spec
-
 services:
   - type: web
     name: drift-doctor-agent
     runtime: docker
-    image: aarushiguptarelanto/drift-doctor-agent:latest
+
+    image:
+      url: docker.io/aarushiguptarelanto/drift-doctor-agent:latest
+
     plan: free
     healthCheckPath: /health
+
     envVars:
       - key: GROQ_API_KEY
         sync: false
+
       - key: MODEL_NAME
         value: llama-3.1-8b-instant
 
   - type: web
     name: drift-doctor-backend
     runtime: docker
-    image: aarushiguptarelanto/drift-doctor-backend:latest
+
+    image:
+      url: docker.io/aarushiguptarelanto/drift-doctor-backend:latest
+
     plan: free
     healthCheckPath: /api/health
+
     envVars:
       - key: AGENT_URL
         fromService:
           type: web
           name: drift-doctor-agent
           envVarKey: RENDER_EXTERNAL_URL
+
       - key: DB_PATH
         value: /tmp/drift_doctor.db
 
   - type: web
     name: drift-doctor-frontend
     runtime: docker
-    image: aarushiguptarelanto/drift-doctor-frontend:latest
+
+    image:
+      url: docker.io/aarushiguptarelanto/drift-doctor-frontend:latest
+
     plan: free
+
     envVars:
-      # Available during Docker build and at runtime (Next.js client bundle)
       - key: NEXT_PUBLIC_API_URL
         fromService:
           type: web
