@@ -1,2 +1,47 @@
 services:
-  # Services configuration will be added here
+  agent:
+    build:
+      context: .
+      dockerfile: docker/agent/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:?Set GROQ_API_KEY in .env (see .env.example)}
+      MODEL_NAME: ${MODEL_NAME:-llama-3.1-8b-instant}
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      AGENT_URL: http://agent:8001
+      DB_PATH: /data/drift_doctor.db
+      MODELS_DIR: /app/ml/models
+    volumes:
+      - backend_data:/data
+      - ml_models:/app/ml/models
+    depends_on:
+      agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+      args:
+        # Browser calls the host-mapped backend port (not the Docker service name).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  ml_models:

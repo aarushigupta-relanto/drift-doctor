@@ -341,9 +341,110 @@ All predictive paths use `MLRunConfig.default()` in `ml/run_config.py`:
 
 ---
 
+## Docker
+
+Run the full stack (agent, backend, frontend) with one command.
+
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose v2)
+- Groq API key
+
+### Quick start
+
+```bash
+cp .env.example .env
+# Edit .env and set GROQ_API_KEY=...
+
+docker compose up --build
+```
+
+| URL | Service |
+|-----|---------|
+| http://localhost:3000 | Frontend |
+| http://localhost:8000/docs | Backend API |
+| http://localhost:8001/health | Agent |
+
+On first startup the **backend** trains `reference_model.pkl` if it is missing (can take 1–2 minutes). Models and SQLite data persist in Docker volumes `ml_models` and `backend_data`.
+
+### Compose services
+
+| Service | Image build | Notes |
+|---------|-------------|--------|
+| `agent` | `docker/agent/Dockerfile` | Needs `GROQ_API_KEY` from `.env` |
+| `backend` | `docker/backend/Dockerfile` | Includes `ml/` + demo CSV; `AGENT_URL=http://agent:8001` |
+| `frontend` | `docker/frontend/Dockerfile` | Next.js standalone; `NEXT_PUBLIC_API_URL` defaults to `http://localhost:8000` |
+
+### Useful commands
+
+```bash
+docker compose up --build -d    # detached
+docker compose logs -f backend
+docker compose down
+docker compose down -v          # also remove volumes (DB + models)
+```
+
+### Files
+
+- `docker-compose.yml` — service wiring and volumes
+- `requirements-docker.txt` — Python deps for the backend image
+- `.dockerignore` — keeps images small
+- `.env.example` — template for secrets and URLs
+
+If the UI cannot reach the API from another machine, set `NEXT_PUBLIC_API_URL` to the host-visible backend URL and rebuild the frontend: `docker compose build frontend`.
+
+---
+
+## Deploy on Render (Docker)
+
+Render runs each service as its own **Docker Web Service** (it does not run `docker compose up`). The repo includes `render.yaml` so you can deploy all three containers from one Blueprint.
+
+### One-click Blueprint
+
+1. Push this repo to GitHub.
+2. [Render Dashboard](https://dashboard.render.com/) → **New** → **Blueprint**.
+3. Connect the repo; Render reads `render.yaml`.
+4. When prompted, set **`GROQ_API_KEY`** (secret) for the agent service.
+5. Wait for builds (backend image trains the reference model during `docker build`).
+
+You get three URLs:
+
+| Service | Blueprint name | Typical URL |
+|---------|----------------|-------------|
+| Agent | `drift-doctor-agent` | `https://drift-doctor-agent.onrender.com` |
+| Backend | `drift-doctor-backend` | `https://drift-doctor-backend.onrender.com` |
+| Frontend | `drift-doctor-frontend` | `https://drift-doctor-frontend.onrender.com` |
+
+Open the **frontend** URL to use the app. The Blueprint wires:
+
+- `AGENT_URL` on the backend → agent’s `RENDER_EXTERNAL_URL`
+- `NEXT_PUBLIC_API_URL` on the frontend → backend’s `RENDER_EXTERNAL_URL`
+
+### Manual Docker Web Service (single service)
+
+Same Dockerfiles, without the Blueprint:
+
+| Setting | Agent | Backend | Frontend |
+|---------|-------|---------|----------|
+| **Runtime** | Docker | Docker | Docker |
+| **Dockerfile** | `docker/agent/Dockerfile` | `docker/backend/Dockerfile` | `docker/frontend/Dockerfile` |
+| **Context** | `.` | `.` | `.` |
+| **Health check** | `/health` | `/api/health` | `/` |
+
+Set env vars as in `render.yaml`. Images listen on Render’s **`PORT`** (defaults 8001 / 8000 / 3000 locally).
+
+### Render notes
+
+- **Free tier** services sleep after inactivity; first request may be slow.
+- **SQLite** on the backend uses `/tmp` on Render (ephemeral); drift history resets on redeploy unless you add a [persistent disk](https://render.com/docs/disks) (paid).
+- **Models** are baked into the backend image at build time so restarts do not retrain.
+- Redeploy the **frontend** if the backend URL changes so `NEXT_PUBLIC_API_URL` is rebuilt.
+
+---
+
 ## Development notes
 
-- **SQLite** file `drift_doctor.db` is created in the backend working directory on first request.
+- **SQLite** path defaults to `drift_doctor.db`; override with `DB_PATH` (used in Docker: `/data/drift_doctor.db`).
 - **WebSocket** at `/ws` broadcasts monitor completion events to connected clients.
 - **`ml/scheduler.py`** can POST drift results to the backend on a timer (optional ops tooling).
 

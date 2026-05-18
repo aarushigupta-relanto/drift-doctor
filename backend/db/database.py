@@ -2,7 +2,7 @@ import aiosqlite, json, sys, os
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-DB_PATH = "drift_doctor.db"
+DB_PATH = os.getenv("DB_PATH", "drift_doctor.db")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
