@@ -6,8 +6,7 @@ services:
   - type: web
     name: drift-doctor-agent
     runtime: docker
-    dockerfilePath: ./docker/agent/Dockerfile
-    dockerContext: .
+    image: aarushiguptarelanto/drift-doctor-agent:latest
     plan: free
     healthCheckPath: /health
     envVars:
@@ -19,8 +18,7 @@ services:
   - type: web
     name: drift-doctor-backend
     runtime: docker
-    dockerfilePath: ./docker/backend/Dockerfile
-    dockerContext: .
+    image: aarushiguptarelanto/drift-doctor-backend:latest
     plan: free
     healthCheckPath: /api/health
     envVars:
@@ -35,8 +33,7 @@ services:
   - type: web
     name: drift-doctor-frontend
     runtime: docker
-    dockerfilePath: ./docker/frontend/Dockerfile
-    dockerContext: .
+    image: aarushiguptarelanto/drift-doctor-frontend:latest
     plan: free
     envVars:
       # Available during Docker build and at runtime (Next.js client bundle)
