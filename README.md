@@ -2,6 +2,8 @@
 
 **Drift Doctor** is an AI reliability platform for monitoring production ML and chatbot systems. It detects statistical and behavioral drift, explains findings with an LLM agent, and runs a train–validate–deploy retraining pipeline for intent classifiers.
 
+Deployment project link: https://drift-doctor-frontend-latest.onrender.com/
+
 The stack is three Python services plus a Next.js dashboard:
 
 | Service | Port | Role |
