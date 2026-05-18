@@ -2,10 +2,8 @@ services:
   - type: web
     name: drift-doctor-agent
     runtime: docker
-
-    image:
-      url: docker.io/aarushiguptarelanto/drift-doctor-agent:latest
-
+    rootDir: agent
+    dockerfilePath: Dockerfile
     plan: free
     healthCheckPath: /health
 
@@ -19,10 +17,8 @@ services:
   - type: web
     name: drift-doctor-backend
     runtime: docker
-
-    image:
-      url: docker.io/aarushiguptarelanto/drift-doctor-backend:latest
-
+    rootDir: backend
+    dockerfilePath: Dockerfile
     plan: free
     healthCheckPath: /api/health
 
@@ -39,10 +35,8 @@ services:
   - type: web
     name: drift-doctor-frontend
     runtime: docker
-
-    image:
-      url: docker.io/aarushiguptarelanto/drift-doctor-frontend:latest
-
+    rootDir: frontend
+    dockerfilePath: Dockerfile
     plan: free
 
     envVars:
